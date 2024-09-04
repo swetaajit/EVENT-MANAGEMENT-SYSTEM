@@ -1,0 +1,206 @@
+import streamlit as st
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import datetime
+
+# Database connection
+def get_db_connection():
+    return psycopg2.connect(
+        dbname="event_management1",
+        user="postgres",
+        password="dboss",
+        host="localhost"
+    )
+
+# Create User
+def create_user(username, email, password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO users (username, email, password) VALUES (%s, %s, %s) RETURNING id;",
+                (username, email, password))
+    user_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return user_id
+
+# Create Event
+def create_event(name, description, location, start_time, end_time, created_by):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO events (name, description, location, start_time, end_time, created_by) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;",
+                (name, description, location, start_time, end_time, created_by))
+    event_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return event_id
+
+# Register for Event
+def register_for_event(user_id, event_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO registrations (user_id, event_id) VALUES (%s, %s);", (user_id, event_id))
+        conn.commit()
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return False
+    cur.close()
+    conn.close()
+    return True
+
+# Get Events
+def get_events():
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM events;")
+    events = cur.fetchall()
+    cur.close()
+    conn.close()
+    return events
+
+# Get Users
+def get_users():
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM users;")
+    users = cur.fetchall()
+    cur.close()
+    conn.close()
+    return users
+
+# Get Registered Events for User (Join Query)
+def get_user_events(user_id):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT e.id, e.name, e.description, e.location, e.start_time, e.end_time 
+        FROM events e
+        JOIN registrations r ON e.id = r.event_id
+        WHERE r.user_id = %s;
+    """, (user_id,))
+    events = cur.fetchall()
+    cur.close()
+    conn.close()
+    return events
+
+# Get Users Registered for Each Event (Join Query)
+def get_event_users(event_id):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT u.id, u.username, u.email 
+        FROM users u
+        JOIN registrations r ON u.id = r.user_id
+        WHERE r.event_id = %s;
+    """, (event_id,))
+    users = cur.fetchall()
+    cur.close()
+    conn.close()
+    return users
+
+# Delete User
+def delete_user(user_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# Streamlit UI
+st.title("Event Management System")
+
+# Tab layout
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["Create User", "Create Event", "Register for Event", "View Events", "View Users", "Delete User", "View Event Registrations"])
+
+# Create User
+with tab1:
+    st.header("Create User")
+    username = st.text_input("Username")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    if st.button("Create User"):
+        user_id = create_user(username, email, password)
+        st.success(f"User created with ID: {user_id}")
+
+# Create Event
+with tab2:
+    st.header("Create Event")
+    name = st.text_input("Event Name")
+    description = st.text_area("Event Description")
+    location = st.text_input("Event Location")
+    start_date = st.date_input("Start Date", datetime.date.today())
+    start_time = st.time_input("Start Time", datetime.datetime.now().time())
+    end_date = st.date_input("End Date", datetime.date.today())
+    end_time = st.time_input("End Time", (datetime.datetime.now() + datetime.timedelta(hours=1)).time())
+    created_by = st.number_input("Created By (User ID)", min_value=1)
+    if st.button("Create Event"):
+        start_datetime = datetime.datetime.combine(start_date, start_time)
+        end_datetime = datetime.datetime.combine(end_date, end_time)
+        event_id = create_event(name, description, location, start_datetime, end_datetime, created_by)
+        st.success(f"Event created with ID: {event_id}")
+
+# Register for Event
+with tab3:
+    st.header("Register for Event")
+    user_id = st.number_input("User ID", min_value=1)
+    event_id = st.number_input("Event ID", min_value=1)
+    if st.button("Register"):
+        if register_for_event(user_id, event_id):
+            st.success("Registered successfully")
+        else:
+            st.error("User is already registered for this event")
+
+# View Events
+with tab4:
+    st.header("View Events")
+    events = get_events()
+    for event in events:
+        st.subheader(event["name"])
+        st.write(f"Description: {event['description']}")
+        st.write(f"Location: {event['location']}")
+        st.write(f"Start Time: {event['start_time']}")
+        st.write(f"End Time: {event['end_time']}")
+        st.write(f"Created By: {event['created_by']}")
+        st.write("---")
+
+# View Users
+with tab5:
+    st.header("View Users")
+    users = get_users()
+    for user in users:
+        st.subheader(user["username"])
+        st.write(f"Email: {user['email']}")
+        st.write(f"Created At: {user['created_at']}")
+        st.write("Registered Events:")
+        events = get_user_events(user["id"])
+        for event in events:
+            st.write(f"- {event['name']} (ID: {event['id']})")
+        st.write("---")
+
+# Delete User
+with tab6:
+    st.header("Delete User")
+    user_id = st.number_input("User ID to delete", min_value=1)
+    if st.button("Delete User"):
+        delete_user(user_id)
+        st.success(f"User with ID {user_id} has been deleted")
+
+# View Event Registrations
+with tab7:
+    st.header("View Event Registrations")
+    event_id = st.number_input("Event ID to view registrations", min_value=1)
+    if st.button("View Registrations"):
+        users = get_event_users(event_id)
+        if users:
+            for user in users:
+                st.subheader(user["username"])
+                st.write(f"Email: {user['email']}")
+                st.write(f"User ID: {user['id']}")
+                st.write("---")
+        else:
+            st.write("No users registered for this event.")
